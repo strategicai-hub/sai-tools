@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  image-prune:
+    image: docker:cli
+    command:
+      - sh
+      - -c
+      - |
+        echo "[$$(date -Iseconds)] image-prune service starting (threshold-based 120 GiB / hourly)"
+        sleep 30
+        THRESHOLD=128849018880
+        INTERVAL=3600
+        while true; do
+          if [ -d /host ]; then
+            USED=$$(df -B1 /host | awk 'NR==2 {print $$3}')
+            TOTAL=$$(df -B1 /host | awk 'NR==2 {print $$2}')
+            USED_GIB=$$((USED/1073741824))
+            TOTAL_GIB=$$((TOTAL/1073741824))
+            echo "[$$(date -Iseconds)] disk used: $${USED_GIB} GiB / $${TOTAL_GIB} GiB (threshold: 120 GiB)"
+            if [ "$$USED" -ge "$$THRESHOLD" ]; then
+              echo "[$$(date -Iseconds)] threshold exceeded - running: docker image prune -a -f"
+              docker image prune -a -f || echo "[$$(date -Iseconds)] prune failed (non-fatal)"
+            else
+              echo "[$$(date -Iseconds)] under threshold - skipping prune"
+            fi
+          else
+            echo "[$$(date -Iseconds)] /host not mounted - cannot check disk; skipping"
+          fi
+          sleep $$INTERVAL
+        done
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /:/host:ro
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        purpose: "Threshold-based docker image prune (>=120 GiB host disk, hourly check)"
